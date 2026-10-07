@@ -16,8 +16,8 @@ You'll be prompted for your LDAP username and password during setup. They're sav
 
 ## What it does
 
-- Creates two scripts in `~/bin/`: one that checks/re-logs-in, one that holds your credentials and does the actual login POST.
-- Installs a `systemd --user` timer that runs the check every minute, starting 30 seconds after your session begins.
+- Creates two scripts in `~/bin/`: one continuous monitor daemon that detects session drops within 1-2 seconds, and one that holds your credentials and handles authentication/status checks.
+- Installs a `systemd --user` background daemon (`iiser-login.service`) that automatically starts on login and restarts if needed.
 - Truncates its own log file automatically so it doesn't grow forever.
 
 ## Requirements
@@ -39,8 +39,9 @@ bash auto_login_setup.sh
 ## Checking it's working
 
 ```bash
-systemctl --user status iiser-login.timer
+systemctl --user status iiser-login.service
 tail -f ~/.iiser-login.log
+~/bin/iiser-login.sh -s    # check live portal status
 ```
 
 A `status: LIVE` in the log means you're logged in and staying that way.
@@ -48,15 +49,15 @@ A `status: LIVE` in the log means you're logged in and staying that way.
 ## Uninstall
 
 ```bash
-systemctl --user disable --now iiser-login.timer
-rm ~/.config/systemd/user/iiser-login.timer ~/.config/systemd/user/iiser-login.service
-rm ~/bin/iiser-login.sh ~/bin/check-internet.sh
+systemctl --user disable --now iiser-login.service
+rm -f ~/.config/systemd/user/iiser-login.service ~/.config/systemd/user/iiser-login.timer
+rm -f ~/bin/iiser-login.sh ~/bin/check-internet.sh
 systemctl --user daemon-reload
 ```
 
 ## How it works
 
-A `systemd` user timer fires every minute and runs a script that re-submits your login credentials to the gateway's `login.xml` endpoint — the same request your browser sends when you fill in the captive portal form. Since it runs unconditionally on a timer rather than reacting to network events, it also catches server-side logouts (session limits, data caps) that don't trigger any local network change and would otherwise go unnoticed until you tried to load a page.
+A lightweight `systemd` user daemon runs in the background and probes connectivity every 2 seconds. The moment the captive portal session drops or times out server-side (due to lease limits or idle timeout), the daemon detects the outage within ~1 second and immediately re-authenticates against `gateway.iisertvm.ac.in:8090/login.xml`. This eliminates the frustrating 30–60 second disconnection gaps of coarse timer-based scripts, restoring internet in under 2 seconds. When offline or off-campus, it backs off to prevent unnecessary traffic.
 
 ## Security note
 
